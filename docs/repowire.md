@@ -62,6 +62,22 @@ Task Manager 同样可托管 `ctm daemon run`。这些服务使用同一用户�
 CODEX_HOME、Repowire 配置和可用 PATH。Codex 共享 App Server 由 Codex 管理，
 bridge 连接它；复用已有服务和原会话，观察脚本不承担连接服务的启动工作。
 
+## 切换 Codex 登录账号
+
+安装本项目时会一并安装 `codex-server` 和登录客户端依赖：
+
+```bash
+codex-server status
+codex-server login --device
+codex-server status
+```
+
+在浏览器中用目标账号完成 device auth 后，当前共享 App Server 自动保存凭据并更新内存认证，
+命令再读回账号核对；连接该服务的会话使用更新后的账号。
+CTM 任务、Repowire daemon 和 bridge 无需为换号而重启。
+默认遵循 `CODEX_HOME` 的控制 socket；自定义路径、超时和影响范围见
+[账号使用说明](../README.md#codex-账号登录与切换)。Repowire 的 HTTP token 仍单独管理。
+
 ## 获取接收身份和验证
 
 在目标 Agent 中调用 Repowire `whoami`，必要时用 `list_peers` 检查精确 peer：

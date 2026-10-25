@@ -7,11 +7,12 @@ name = "codex-task-manager"
 version = "0.1.0"
 description = "Shared observation tasks and short-lived notification buffers for Repowire"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["websockets>=15,<16"]
 
 [project.scripts]
 codex-task-manager = "codex_task_manager.cli:main"
 ctm = "codex_task_manager.cli:main"
+codex-server = "codex_task_manager.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

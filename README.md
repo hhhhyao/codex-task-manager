@@ -36,19 +36,49 @@ Agent B ──提交/发布事件──┼─→ Task Manager daemon
 
 ## 安装
 
-需要 Python 3.11+、Linux 或 macOS；运行时代码只有 Python 标准库依赖。
+需要 Python 3.11+、Linux 或 macOS。安装时一并提供 `ctm`、`codex-task-manager`、
+`codex-server`，并自动安装 App Server 登录客户端使用的 `websockets` 依赖。
 先按 [Repowire 配置](docs/repowire.md) 接通原生会话投递，再安装本项目：
 
 ```bash
 cd /path/to/codex-task-manager
 uv tool install --editable .
 ctm --version
+codex-server --help
 ctm daemon start
 ```
 
 也可以使用虚拟环境：`python3 -m venv .venv`，然后
-`.venv/bin/python -m pip install -e .`；后续使用 `.venv/bin/ctm`。
+`.venv/bin/python -m pip install -e .`；后续使用 `.venv/bin/ctm` 和 `.venv/bin/codex-server`。
 `codex-task-manager` 与 `ctm` 是同一个 CLI。
+
+### Codex 账号登录与切换
+
+`codex-server` 是本项目提供的 App Server 账号客户端，直接连接正在运行的共享服务，
+调用 Codex 官方认证接口。通过 device auth 完成一次登录后，服务自动保存凭据并重载认证状态，
+连接该服务的会话使用更新后的账号；CTM、Repowire 和 bridge 继续运行。
+
+```bash
+codex-server status           # 查询运行中的服务账号
+codex-server login --device   # 显示网址和一次性验证码，在浏览器选择目标账号并完成授权
+codex-server status           # 核对服务端账号
+```
+
+`login` 默认使用 device auth，等待上限为 600 秒；可用 `--timeout 900` 调整（最多 1800 秒）。
+命令收到本次登录完成通知后会读回服务端账号；若可见身份未变化，会明确提示。
+Ctrl+C 或超时会尝试取消本次登录，不执行 logout。也支持 `login --browser`，远程使用时
+可能需要转发浏览器回调端口。
+
+默认连接 `${CODEX_HOME:-~/.codex}/app-server-control/app-server-control.sock`。
+服务未运行时先执行 `codex app-server daemon start`；自定义实例可用
+`codex-server --socket /absolute/control.sock status` 或同样的前缀执行 `login --device`。
+脚本和诊断输出可用 `codex-server status --json --redact` 隐去邮箱与 workspace ID。
+
+换号更新目标 shared App Server 的 ChatGPT 账号，使用该认证的连接会话及同一凭据存储下
+以后启动的 Codex 使用新登录；单独配置的 API key 不随之切换。
+其他已经运行的独立实例可能仍缓存旧凭据；在途请求是否改用新账号尚未验证。
+普通 `codex login --device-auth` 更新本地凭据，与直接让运行中的服务完成登录是不同入口。
+认证协议见 [OpenAI App Server 文档](https://learn.chatgpt.com/docs/app-server#3b-log-in-with-chatgpt-device-code-flow)。
 
 将项目内 skill 安装到 Codex：
 
@@ -280,12 +310,14 @@ daemon 正常停止会清理正在运行的检查。异常退出时，发送中�
 ## 验证与开发
 
 ```bash
-python3 -m unittest discover -s tests -v
+uv run python -m unittest discover -s tests -v
 PYTHONPATH=src python3 -m codex_task_manager --help
 ```
 
 测试启动隔离 daemon 和本机模拟 Repowire，覆盖多 Agent 提交、定时积攒、并发到达、
-去重、正文释放、等待超期、重启、取消与失败恢复；不会向真实会话发送测试消息。
+去重、正文释放、等待超期、重启、取消与失败恢复。
+账号客户端使用隔离的模拟 App Server 验证 device/browser 登录、账号读回、超时、取消及并发锁；
+测试不会向真实会话发送消息或切换真实账号。
 
 也可运行约 50 秒的完整假工作流，查看实际消息和状态证据：
 
