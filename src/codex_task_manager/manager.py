@@ -5,7 +5,7 @@ import json
 import time
 import uuid
 
-from .common import digest, number, stamp, timestamp, validate_spec
+from .common import digest, number, stamp, timestamp, validate_description, validate_spec
 
 
 TERMINAL = {"finished", "cancelled"}
@@ -136,7 +136,7 @@ class Manager:
                        "last_check_at", "last_successful_check_at", "last_trigger_at", "last_sent_at")
         result = {"id": task_id, "name": spec["name"], "owner": spec["owner"], "target": spec["target"],
                   "mode": spec["mode"], "status": status, "source_done": state["source_done"],
-                  "next_action": spec.get("next_action"),
+                  "description": spec.get("description"), "next_action": spec.get("next_action"),
                   "interval_seconds": spec.get("interval_seconds"), "buffered": len(state["buffer"]),
                   "sending_events": len(outbox["events"]) if outbox else 0,
                   "delivery": {k: v for k, v in outbox.items() if k not in {"events", "text"}} if outbox else None,
@@ -149,6 +149,12 @@ class Manager:
         if include_buffer:
             result["buffer"] = state["buffer"]
         return result
+
+    def describe(self, task_id, description):
+        description = validate_description(description)
+        with self.store.edit(task_id) as (spec, _):
+            spec["description"] = description
+        return self.show(task_id)
 
     def list(self, owner=None, include_finished=False):
         return [self.show(spec["id"]) for spec, state in self.store.all()

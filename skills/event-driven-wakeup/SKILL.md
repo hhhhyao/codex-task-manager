@@ -25,7 +25,7 @@ the same turn or across idle time. Judge the workload's remaining wait and natur
 consumption path, not the duration of a fast status check; no fixed time cutoff.
 
 In the existing plan, identify the awaited condition, why independent follow-up
-helps, what should cause a notice, and a concrete `next_action`. "Continue the
+helps, what should cause a notice, a one-sentence task `description`, and a concrete `next_action`. "Continue the
 Goal" alone is not a useful continuation. Already-ready results should be handled
 now. See [observation patterns](references/events.md) for examples.
 

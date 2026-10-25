@@ -57,13 +57,19 @@ def identity(value):
     return {k: value[k] for k in ("peer_id", "thread_id", "label") if k in value}
 
 
+def validate_description(value):
+    if not isinstance(value, str) or not 1 <= len(value.strip()) <= 1000:
+        raise ValueError("description must contain 1..1000 characters")
+    return value.strip()
+
+
 def validate_spec(raw):
     if not isinstance(raw, dict):
         raise ValueError("task specification must be an object")
     allowed = {"id", "name", "owner", "target", "cwd", "check", "interval_seconds", "fire_at",
                "mode", "window_seconds", "review_interval_seconds", "check_timeout", "max_events",
                "max_buffer_bytes", "max_message_chars", "seen_limit", "retry_seconds",
-               "max_attempts", "error_notify_after", "plan_path", "message", "next_action"}
+               "max_attempts", "error_notify_after", "plan_path", "message", "next_action", "description"}
     if set(raw) - allowed:
         raise ValueError(f"unknown task fields: {sorted(set(raw) - allowed)}")
     spec = dict(raw)
@@ -72,6 +78,8 @@ def validate_spec(raw):
     spec["target"] = identity(spec.get("target", spec["owner"]))
     if not isinstance(spec.get("name"), str) or not 1 <= len(spec["name"]) <= 160:
         raise ValueError("name must contain 1..160 characters")
+    if "description" in spec:
+        spec["description"] = validate_description(spec["description"])
     if "message" in spec and (not isinstance(spec["message"], str) or not 1 <= len(spec["message"].strip()) <= 2000):
         raise ValueError("timer message must contain 1..2000 characters")
     if "next_action" in spec and (not isinstance(spec["next_action"], str) or not 1 <= len(spec["next_action"].strip()) <= 1000):

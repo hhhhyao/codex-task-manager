@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -37,12 +38,12 @@ def daemon_start(directory):
 def table(rows):
     if not rows:
         return "No active tasks."
-    headers = ["ID", "NAME", "OWNER", "MODE", "STATE", "BUFFER", "NEXT CHECK", "REVIEW EVERY", "NEXT REVIEW", "LAST TRIGGER", "NEXT ACTION"]
+    headers = ["ID", "NAME", "DESCRIPTION", "OWNER", "MODE", "STATE", "BUFFER", "NEXT CHECK", "REVIEW EVERY", "NEXT REVIEW", "LAST TRIGGER", "NEXT ACTION"]
     data = []
     def short_time(value):
         return value[:19].replace("T", " ") if value else "-"
     for row in rows:
-        data.append([row["id"], row["name"][:28], row["owner"].get("label", row["owner"]["thread_id"][:8]),
+        data.append([row["id"], row["name"][:28], (row.get("description") or "-").replace("\n", " ")[:48], row["owner"].get("label", row["owner"]["thread_id"][:8]),
                      row["mode"], row["status"], str(row["buffered"]), short_time(row["next_check_at"]),
                      f"{row['review_interval_seconds']:g}s" if row.get("review_interval_seconds") is not None else "-",
                      short_time(row["next_review_at"]), short_time(row["last_trigger_at"]),
@@ -61,6 +62,9 @@ def parser():
         item = commands.add_parser(name, **kwargs)
         item.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
         return item
+    item = command("ui", help="Read-only terminal overview of CTM, Repowire and local services")
+    item.add_argument("--once", action="store_true", help="Print one snapshot; also used automatically without a TTY")
+    item.add_argument("--refresh", type=float, default=5, help="Automatic refresh interval in seconds (default: 5)")
     daemon = command("daemon", help="Start, inspect or stop the shared local daemon")
     sub = daemon.add_subparsers(dest="action", required=True)
     for action in ("start", "status", "stop", "run"):
@@ -81,6 +85,9 @@ def parser():
     item = command("show")
     item.add_argument("id")
     item.add_argument("--buffer", action="store_true", help="Explicitly include only currently buffered events")
+    item = command("describe", help="Set a task's purpose without changing its observation or buffer")
+    item.add_argument("id")
+    item.add_argument("description")
     for name in ("cancel", "flush", "resume"):
         command(name).add_argument("id")
     item = command("emit", help="Submit one event or an array of events from a producer callback")
@@ -101,6 +108,11 @@ def main(argv=None):
     args = parser().parse_args(argv)
     directory = state_directory(args.state_dir)
     try:
+        if args.command == "ui":
+            if not math.isfinite(args.refresh) or not 1 <= args.refresh <= 3600:
+                raise ValueError("refresh must be 1..3600 seconds")
+            from .tui import run_dashboard
+            return run_dashboard(directory, args.refresh, args.once, args.json)
         if args.command == "daemon":
             if args.action == "run":
                 if not 1 <= args.max_checks <= 64 or not 1 <= args.max_sends <= 64 or not 0 <= args.retention_seconds <= 86400:
@@ -123,6 +135,8 @@ def main(argv=None):
             result = request(directory, "list", owner=owner, include_finished=args.include_finished)
         elif args.command == "show":
             result = request(directory, "show", id=args.id, buffer=args.buffer)
+        elif args.command == "describe":
+            result = request(directory, "describe", id=args.id, description=args.description)
         elif args.command == "emit":
             value = json.loads(args.file.read_text())
             result = request(directory, "emit", id=args.id, events=value if isinstance(value, list) else [value])

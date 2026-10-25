@@ -39,12 +39,14 @@ class Store:
     def edit(self, task_id):
         # All accesses run on the daemon's event-loop thread, never across awaits.
         spec, state = self.get(task_id)
+        original_spec = json.dumps(spec)
         original = json.dumps(state)
         yield spec, state
         updated = json.dumps(state)
-        if updated != original:
+        updated_spec = json.dumps(spec)
+        if updated != original or updated_spec != original_spec:
             with self.db:
-                self.db.execute("UPDATE tasks SET state=? WHERE id=?", (updated, task_id))
+                self.db.execute("UPDATE tasks SET spec=?,state=? WHERE id=?", (updated_spec, updated, task_id))
 
     def delete(self, task_id):
         with self.db:

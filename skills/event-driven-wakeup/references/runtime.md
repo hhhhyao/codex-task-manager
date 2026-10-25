@@ -24,12 +24,16 @@ Start only when no matching daemon is available. Default shared state is
 when `CODEX_THREAD_ID` is not available. `show` gives current status, next check/
 flush/review, last trigger/send, recent error and buffer counts. It does not
 return event history. `show --buffer` explicitly inspects current buffered events.
+For human inspection, `ctm ui` opens a read-only service/task/peer viewer;
+`ctm ui --once` or `--json` gives one snapshot without a TTY. It neither starts
+services nor registers observers. Prefer targeted `show` for a known task.
 
 Submit JSON, for example:
 
 ```json
 {
   "name": "compare-current-runs",
+  "description": "Wait for comparable evaluation results and surface problems requiring intervention.",
   "owner": {"peer_id": "EXACT_PEER_ID", "thread_id": "ORIGINAL_THREAD_UUID"},
   "cwd": "/absolute/task",
   "check": ["/absolute/python", "/absolute/task/check.py"],
@@ -47,6 +51,10 @@ interval. Default `target` is the owner. Resolve the saved thread before changin
 a failed peer route; do not pick the latest thread or display name.
 Native busy delivery may steer an active turn;
 this runtime does not guarantee idle-only delivery or cold-resume offline threads.
+
+Use `description` for the task's purpose and `next_action` for the concrete
+continuation. `ctm describe ID "purpose"` updates only the description of an
+existing task, preserving its observation, timers and buffer.
 
 `once` stops checks after the first business event and drains already accepted contents;
 review/error notices do not end it. `review_interval_seconds` repeats waiting

@@ -4,12 +4,12 @@ import socket
 from .common import socket_path
 
 
-def request(state_dir, operation, **values):
+def request(state_dir, operation, timeout=10, **values):
     data = json.dumps({"op": operation, **values}, ensure_ascii=False).encode() + b"\n"
     if len(data) > 262144:
         raise ValueError("request exceeds 256 KiB; submit brief events")
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-        connection.settimeout(10)
+        connection.settimeout(timeout)
         try:
             connection.connect(str(socket_path(state_dir)))
         except OSError as exc:

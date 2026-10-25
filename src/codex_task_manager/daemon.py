@@ -101,6 +101,8 @@ class Daemon:
             return self.manager.emit(task_id, request["events"])
         if op == "flush":
             return self.manager.flush(task_id)
+        if op == "describe":
+            return self.manager.describe(task_id, request["description"])
         if op == "review":
             return self.manager.configure_review(task_id, request["interval_seconds"])
         if op == "resume":

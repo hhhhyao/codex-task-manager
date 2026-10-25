@@ -64,6 +64,54 @@ cp -R skills/event-driven-wakeup/. "${CODEX_HOME:-$HOME/.codex}/skills/event-dri
 
 ## 多 Agent 共用
 
+### 终端看板
+
+```bash
+ctm ui                 # 交互界面，默认每 5 秒刷新
+ctm ui --refresh 10    # 改为每 10 秒刷新
+ctm ui --once          # 打印一次状态快照
+ctm ui --json          # 一次结构化快照
+```
+
+主界面按使用频率分为三页，启动时默认进入 Tasks：
+
+- **Tasks**：当前 CTM 任务、用途说明 `description`、状态、buffer 数量、下次检查和 review；宽屏补充所有者与单次/循环模式。
+  选中后在底部直接显示说明和 `next_action`；详情包含观测到的工作状态、review 间隔/次数、上次触发/发送、错误及完整身份。
+- **Agents**：Session 名字、Repowire agent 名称、工作状态、接收状态与待处理 ask 数；详情显示后端、来源及可寻址性。
+  Codex 会话名字通过精确 thread ID 只读匹配本地 `$CODEX_HOME`（默认 `~/.codex`）的状态库；不读取对话正文。
+  远端会话、未命名会话或状态库不可用时保留 agent 名称；窄屏优先显示 Session，底部保留 agent 名称。
+  详情也保留 `session_id`、子 agent 昵称和 Repowire 提供的 `tmux_session`。
+  默认显示主会话；按 `a` 查看全部记录。`STATE` 标出 `subagent`（子 agent）、`internal`（临时/内部线程）、
+  `offline`、`no input`（不可直接输入）、`archived` 或 `unmatched`（本地未匹配，可能残留或属于另一个 CODEX_HOME）。
+  底部和详情可查看分类原因及原始连接状态。未命名、长期空闲、远端会话或本地状态库不可用不会单独导致隐藏；
+  未匹配但正在执行或有待处理 ask 的会话也保留。列表过滤不删除注册记录。
+- **Services**：CTM daemon、Repowire daemon、Codex bridge、Codex App Server。
+  分别展示接口可达性和本机进程证据；进程存在不等于接口健康，不依赖 systemd user bus。
+
+保留终端默认前景和背景；绿色表示正常，青色表示执行中，黄色表示需要留意，红色表示错误。
+选中项使用 `›` 和加粗，不反转整行背景。状态文字始终保留，单色终端或设置 `NO_COLOR` 时也能使用。
+
+| 按键 | 操作 |
+| --- | --- |
+| `←` / `→` 或 `h` / `l` | 左右切换页面 |
+| `Tab` / `Shift-Tab` / `1`–`3` | 切换页面的备用按键 |
+| `↑` / `↓` 或 `j` / `k` | 选择项目；详情里滚动 |
+| `Enter` / `Esc` | 打开/关闭详情 |
+| `PageUp` / `PageDown` | 翻页 |
+| `/`，输入后按 `Enter` | 搜索当前列表；退格删除过滤内容 |
+| `r` | 手动刷新 |
+| `p` | 暂停/恢复自动刷新 |
+| `a` | Agents 页面切换主会话/全部记录 |
+| `q` | 退出 |
+
+看板只读，不启动、停止服务，不发消息或创建观察任务，也不展示认证配置。
+查询在后台执行，某一数据源不可用时仍可查看其他页面，退出不影响 daemon。
+交互模式使用 Python 标准库 curses；非 TTY 自动输出一次快照。
+窄终端简化列，完整内容仍可进入详情查看，所有时间按 UTC 展示。
+Repowire 原生 schedules/Jobs 与 CTM 任务相互独立，本版不混入 CTM 子项。
+
+### 命令行管理
+
 同一用户的 Agent 默认连接同一个 daemon：
 
 ```bash
@@ -71,12 +119,15 @@ ctm daemon status
 ctm list --all
 ctm list --mine
 ctm show TASK_ID
+ctm describe TASK_ID "等待后台评估完成，汇总可比较的运行结果"
 ctm cancel TASK_ID
 ```
 
 `--mine` 使用 `CODEX_THREAD_ID`；也可显式 `ctm list --owner THREAD_UUID`。
 列表展示所有者、单次/循环、当前状态、buffer 数量、下次检查、等待检查和上次事件时间。
 `next_action` 记录唤醒后要做的具体动作，列表展示简写，详情和通知展示完整内容。
+`description` 用一句话说明任务用途，在提交配置中填写；旧任务可用 `ctm describe ID "说明"` 补充或修改。
+更新说明保留任务 ID、观察进度、计时和 buffer；省略该字段的旧任务显示 `-`。
 `show` 还展示上次成功检查、上次发送、下次 buffer 发送、当前发送状态和最近错误。
 `--json` 提供结构化输出；`show --buffer` 才额外显示当前未发送事件。
 

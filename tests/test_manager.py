@@ -55,6 +55,26 @@ class ManagerTests(unittest.TestCase):
         batch = self.m.freeze(task)
         self.assertIn("Next action: Compare A/B metrics and diagnose pending C", batch["text"])
 
+    def test_description_is_persisted_and_editing_preserves_observation_state(self):
+        old_task = self.task()
+        self.assertIsNone(self.m.show(old_task)["description"])
+        task = self.task(description="  Compare background evaluations  ")
+        self.m.emit(task, [self.event("a")])
+        before = self.store.get(task)[1]
+        self.assertEqual(self.m.show(task)["description"], "Compare background evaluations")
+        self.m.describe(task, "观察 A/B 是否具备比较条件")
+        self.assertEqual(self.store.get(task)[1], before)
+        self.assertEqual(self.m.show(task)["description"], "观察 A/B 是否具备比较条件")
+        for invalid in (None, "", "  ", 42, "x"*1001):
+            with self.assertRaisesRegex(ValueError, "description"):
+                self.m.describe(task, invalid)
+        other = Store(self.root)
+        try:
+            self.assertEqual(Manager(other).show(task)["description"], "观察 A/B 是否具备比较条件")
+        finally:
+            other.close()
+        self.assertEqual(self.store.get(task)[1], before)
+
     def test_dedup_ignores_poll_timestamps_but_detects_changed_facts(self):
         task = self.task(window_seconds=0)
         self.m.emit(task, [self.event("a", at=stamp(self.now))])

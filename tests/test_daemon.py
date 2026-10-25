@@ -182,13 +182,20 @@ class DaemonTests(unittest.TestCase):
 
     def test_cli_submission_listing_and_owner_filter(self):
         path = self.root / "task.json"
-        path.write_text(json.dumps({"name": "CLI task", "owner": OWNER, "mode": "repeat"}))
+        path.write_text(json.dumps({"name": "CLI task", "description": "Observe fake evaluation results", "owner": OWNER, "mode": "repeat"}))
         result = self.cli("submit", str(path))
         self.assertEqual(result.returncode, 0, result.stderr)
         task = json.loads(result.stdout)["id"]
         listing = self.cli("list", "--owner", OWNER["thread_id"], "--json")
         self.assertEqual([r["id"] for r in json.loads(listing.stdout)], [task])
         self.assertIn("CLI task", self.cli("list").stdout)
+        self.assertIn("Observe fake evaluation results", self.cli("list").stdout)
+        described = self.cli("describe", task, "Compare background run outcomes")
+        self.assertEqual(described.returncode, 0, described.stderr)
+        self.assertEqual(json.loads(described.stdout)["description"], "Compare background run outcomes")
+        self.stop()
+        self.start()
+        self.assertEqual(json.loads(self.cli("show", task).stdout)["description"], "Compare background run outcomes")
         self.assertEqual(self.cli("cancel", task).returncode, 0)
 
 

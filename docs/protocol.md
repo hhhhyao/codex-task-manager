@@ -10,6 +10,7 @@
 ```json
 {
   "name": "compare-evaluations",
+  "description": "等待评估运行产生可比较的结果，并提醒处理需要干预的问题。",
   "owner": {
     "peer_id": "YOUR_EXACT_PEER_ID",
     "thread_id": "00000000-0000-4000-8000-000000000001",
@@ -35,6 +36,7 @@
 | --- | --- |
 | `id` | 可选 UUID；默认生成。显式 ID 可使相同配置提交幂等。每轮使用新 ID。 |
 | `name`, `owner` | 必需。名称和提交者身份。 |
+| `description` | 可选用途说明，1..1000 字符；列表和详情可见。用 `ctm describe ID "说明"` 修改，保留观察与 buffer 状态。 |
 | `mode` | `once`；或 `repeat`。 |
 | `check` | 可选。每次执行的短检查 argv。 |
 | `interval_seconds` | 有 `check` 时默认 60 秒；每次检查结束后计时，不重叠。 |
