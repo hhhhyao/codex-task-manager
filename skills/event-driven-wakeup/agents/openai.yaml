@@ -1,0 +1,3 @@
+interface:
+  display_name: "Event-driven Wakeup"
+  short_description: "Follow external work while the agent turns elsewhere"
