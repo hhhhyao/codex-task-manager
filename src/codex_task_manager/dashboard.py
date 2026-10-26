@@ -16,6 +16,7 @@ import urllib.request
 
 from .client import request
 from .common import stamp
+from .overview import recurring_jobs, schedules, source_errors, task_overview, visible_tasks, when
 from .transport import NoRedirect
 
 
@@ -228,10 +229,12 @@ def collect_snapshot(directory, timeout=2):
             "connection": pool.submit(section, lambda: repowire_connection(timeout)),
         }
         connection = pending.pop("connection").result()
+        endpoint = None
         if connection["error"]:
-            health = peers = {"data": None, "error": connection["error"]}
+            health = peers = schedule_rows = jobs = {"data": None, "error": connection["error"]}
         else:
             base, token = connection["data"]
+            endpoint = base
             def health_data():
                 value = read_json(base, token, "/health", timeout)
                 if not isinstance(value, dict) or "status" not in value:
@@ -239,9 +242,14 @@ def collect_snapshot(directory, timeout=2):
                 return {k: value[k] for k in ("status", "peers", "schema_version") if k in value}
             health_future = pool.submit(section, health_data)
             peers_future = pool.submit(section, lambda: project_peers(read_json(base, token, "/peers?include_hidden=true", timeout)))
+            schedules_future = pool.submit(section, lambda: schedules(read_json(base, token, "/schedules", timeout)))
+            jobs_future = pool.submit(section, lambda: recurring_jobs(read_json(base, token, "/work?view=summary", timeout)))
             health, peers = health_future.result(), peers_future.result()
+            schedule_rows, jobs = schedules_future.result(), jobs_future.result()
         result = {key: future.result() for key, future in pending.items()}
-    result.update(updated_at=stamp(), state_dir=str(directory), repowire=health, peers=peers)
+    result.update(updated_at=stamp(), state_dir=str(directory), repowire=health, peers=peers,
+                  repowire_endpoint=endpoint, schedules=schedule_rows, recurring_jobs=jobs)
+    result["task_overview"] = task_overview(result)
     proc = result["processes"]["data"]
     process_rows = proc or {}
     ping = result["ctm"]["data"]
@@ -252,7 +260,7 @@ def collect_snapshot(directory, timeout=2):
          "state_dir": str(directory), "active_tasks": ping.get("active_tasks") if ping else None,
          "checks_running": ping.get("checks_running") if ping else None, "sends_running": ping.get("sends_running") if ping else None},
         {"name": "Repowire daemon", "status": "reachable" if health and health.get("status") == "ok" else "unavailable",
-         "pids": [p["pid"] for p in process_rows.get("repowire", [])], "evidence": "HTTP /health + local process", "error": result["repowire"]["error"]},
+         "pids": [p["pid"] for p in process_rows.get("repowire", [])], "evidence": "HTTP /health + local process", "error": result["repowire"]["error"], "endpoint": endpoint},
     ]
     for key, label in (("bridge", "Codex bridge"), ("app_server", "Codex App Server")):
         result["services"].append({"name": label, "status": "running" if process_rows.get(key) else "not observed" if proc is not None else "unknown",
@@ -261,14 +269,16 @@ def collect_snapshot(directory, timeout=2):
     return result
 
 
-def rows_for(snapshot, view, query="", show_all=False):
+def rows_for(snapshot, view, query="", show_all=False, source="all"):
     if view == "Services":
         rows = snapshot.get("services", [])
+    elif view == "Tasks":
+        rows = visible_tasks(snapshot, source, show_all)
     else:
-        rows = (snapshot.get("tasks" if view == "Tasks" else "peers", {}).get("data") or [])
+        rows = snapshot.get("peers", {}).get("data") or []
     if view == "Agents" and not show_all:
         rows = [r for r in rows if not agent_visibility_reasons(r)]
-    if view != "Services":
+    if view == "Agents":
         rows = sorted(rows, key=lambda r: str((r.get("session_name") if view == "Agents" else None) or r.get("name") or r.get("display_name") or r.get("id") or "").lower())
     if query:
         rows = [r for r in rows if query.casefold() in json.dumps(r, ensure_ascii=False).casefold()]
@@ -276,13 +286,11 @@ def rows_for(snapshot, view, query="", show_all=False):
 
 
 def row_id(row):
-    return row.get("id") or row.get("peer_id") or row.get("name")
+    return row.get("view_id") or row.get("id") or row.get("peer_id") or row.get("name")
 
 
 def table_layout(snapshot, view, rows, width):
     peer_names = {r.get("peer_id"): r.get("display_name") or r.get("name") for r in snapshot.get("peers", {}).get("data") or []}
-    def when(value):
-        return value[11:19] if isinstance(value, str) and len(value) >= 19 else "-"
     if view == "Services":
         headers, sizes = ["SERVICE", "STATE", "PID"], [max(15, width-32), 13, 15]
         cells = [[r["name"], r["status"], ",".join(map(str, r["pids"])) or "-"] for r in rows]
@@ -290,22 +298,24 @@ def table_layout(snapshot, view, rows, width):
             headers, sizes = ["SERVICE", "STATE", "PID", "EVIDENCE"], [21, 13, 19, width-59]
             cells = [values+[r["evidence"]] for values, r in zip(cells, rows)]
     elif view == "Tasks":
-        if width < 70:
-            headers, sizes = ["TASK", "STATE", "BUF", "REVIEW"], [max(12, width-31), 14, 3, 8]
-        elif width < 90:
-            headers, sizes = ["TASK", "STATE", "DESCRIPTION", "BUF", "REVIEW"], [20, 14, width-53, 3, 8]
-        elif width < 140:
-            headers, sizes = ["TASK", "STATE", "DESCRIPTION", "BUF", "CHECK", "REVIEW"], [24, 17, width-70, 3, 8, 8]
+        if width < 100:
+            headers, sizes = ["SOURCE", "TASK", "STATE", "NEXT UTC"], [11, max(9, width-44), 11, 16]
+        elif width < 160:
+            headers, sizes = ["SOURCE", "TASK", "STATE", "DESCRIPTION", "NEXT UTC", "TARGET"], [11, 20, 14, max(10, width-83), 16, 12]
         else:
-            headers, sizes = ["TASK", "STATE", "DESCRIPTION", "OWNER", "MODE", "BUF", "CHECK", "REVIEW"], [26, 17, width-98, 16, 6, 3, 8, 8]
+            headers, sizes = ["SOURCE", "TASK", "STATE", "DESCRIPTION", "MODE", "NEXT UTC", "OWNER", "TARGET", "BUF", "REVIEW UTC"], [11, 22, 17, width-137, 6, 16, 14, 14, 3, 16]
         cells = []
         for row in rows:
             owner = row.get("owner") or {}
             owner = owner if isinstance(owner, dict) else {}
             owner = owner.get("label") or peer_names.get(owner.get("peer_id")) or owner.get("thread_id", "-")[:8]
-            values = {"TASK": row.get("name"), "STATE": row.get("status"), "DESCRIPTION": row.get("description"),
-                      "OWNER": owner, "MODE": row.get("mode"), "BUF": row.get("buffered"),
-                      "CHECK": when(row.get("next_check_at")), "REVIEW": when(row.get("next_review_at"))}
+            target = row.get("target_name")
+            if row.get("target_state") in {"offline", "no input", "disconnected"}:
+                target = f"[{row['target_state']}] {target}"
+            values = {"SOURCE": row.get("source", "CTM"), "TASK": row.get("name"), "STATE": row.get("status"), "DESCRIPTION": row.get("description"),
+                      "OWNER": row.get("owner_name") or owner, "MODE": row.get("mode"), "BUF": row.get("buffered"),
+                      "TARGET": target, "NEXT UTC": when(row.get("next_at") or row.get("next_check_at") or row.get("next_review_at")),
+                      "REVIEW UTC": when(row.get("next_review_at"))}
             cells.append([values[header] for header in headers])
     else:
         compact = width < 90
@@ -326,7 +336,13 @@ def text_snapshot(snapshot, width=120):
     for view in VIEWS:
         lines.extend(["", view])
         source = snapshot.get("tasks" if view == "Tasks" else "peers", {})
-        if view != "Services" and source.get("error"):
+        if view == "Tasks":
+            if snapshot.get("repowire_endpoint"):
+                lines.append("Repowire: " + snapshot["repowire_endpoint"])
+            lines.extend("Unavailable: " + error for error in source_errors(snapshot))
+            rows = rows_for(snapshot, view)
+            lines.extend(table_lines(snapshot, view, rows, width) if rows else ["No entries from available sources."])
+        elif view != "Services" and source.get("error"):
             lines.append("Unavailable: " + source["error"])
         else:
             rows = rows_for(snapshot, view)

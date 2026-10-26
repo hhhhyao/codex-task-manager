@@ -105,8 +105,14 @@ ctm ui --json          # 一次结构化快照
 
 主界面按使用频率分为三页，启动时默认进入 Tasks：
 
-- **Tasks**：当前 CTM 任务、用途说明 `description`、状态、buffer 数量、下次检查和 review；宽屏补充所有者与单次/循环模式。
-  选中后在底部直接显示说明和 `next_action`；详情包含观测到的工作状态、review 间隔/次数、上次触发/发送、错误及完整身份。
+- **Tasks**：聚合 CTM 观察任务、Repowire 定时消息（单次或 cron）和 recurring Jobs。
+  `SOURCE` 区分 `CTM`、`RW schedule`、`RW job`；`NEXT UTC` 显示带日期的下次时间，按实际时间排序。
+  CTM 的下次时间取待执行的检查、review、buffer 发送中最早的一项，详情给出 `next_kind` 和各项时间。
+  列表显示用途说明、状态和目标会话，宽屏补充所有者、模式、buffer 和 review；选中后在底部查看完整说明、
+  CTM `next_action`，或 Repowire cron 表达式、目标连接状态及实例地址。
+  Repowire 消息使用正文首个非元数据行作为摘要，详情保留正文和原始 ID。
+  默认显示当前计划（包括暂停的 recurring Job），按 `s` 切换全部／CTM／Repowire，按 `a` 查看已取消的计划。
+  计划不会因所属 agent 被隐藏或目标离线而消失；详情中的 `management` 给出其原管理器的查询、取消命令。
 - **Agents**：Session 名字、Repowire agent 名称、工作状态、接收状态与待处理 ask 数；详情显示后端、来源及可寻址性。
   Codex 会话名字通过精确 thread ID 只读匹配本地 `$CODEX_HOME`（默认 `~/.codex`）的状态库；不读取对话正文。
   远端会话、未命名会话或状态库不可用时保留 agent 名称；窄屏优先显示 Session，底部保留 agent 名称。
@@ -131,6 +137,8 @@ ctm ui --json          # 一次结构化快照
 | `/`，输入后按 `Enter` | 搜索当前列表；退格删除过滤内容 |
 | `r` | 手动刷新 |
 | `p` | 暂停/恢复自动刷新 |
+| `s` | Tasks 页面切换全部／CTM／Repowire 来源 |
+| `a` | Tasks 页面显示/隐藏已取消的 recurring 计划 |
 | `a` | Agents 页面切换主会话/全部记录 |
 | `q` | 退出 |
 
@@ -138,7 +146,15 @@ ctm ui --json          # 一次结构化快照
 查询在后台执行，某一数据源不可用时仍可查看其他页面，退出不影响 daemon。
 交互模式使用 Python 标准库 curses；非 TTY 自动输出一次快照。
 窄终端简化列，完整内容仍可进入详情查看，所有时间按 UTC 展示。
-Repowire 原生 schedules/Jobs 与 CTM 任务相互独立，本版不混入 CTM 子项。
+各任务由原管理器保存、调度和取消；看板通过 CTM 控制接口、Repowire `/schedules` 和
+`/work?view=summary` 中的 recurring 计划聚合展示，不创建副本或额外观察任务。
+CTM 专属的 buffer/review 在 Repowire 行显示 `-`。定时消息接口没有提供的上次投递结果保持未知；
+cron 时间推进不证明投递成功，Job 的上次 materialization 也不证明执行完成。
+某个来源不可用时明确显示错误，其余来源继续可见；Repowire 实例地址可在快照和服务/任务详情查看。
+
+`ctm list/show/cancel` 继续只管理 CTM，现有脚本的行为保持一致。
+`ctm ui --json` 的 `tasks` 保留 CTM 原数据，新增 `schedules`、`recurring_jobs` 和统一的 `task_overview`；
+每个来源分别提供 `data`/`error`，总览使用带来源的 `view_id` 保持选择稳定。读取当前状态不积累本地历史。
 
 ### 命令行管理
 

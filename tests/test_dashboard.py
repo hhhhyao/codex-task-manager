@@ -30,13 +30,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.server.reads.append(self.path)
-        self.send_response(self.server.health_code if self.path == "/health" else 200)
+        code = self.server.health_code if self.path == "/health" else self.server.schedule_code if self.path == "/schedules" else self.server.jobs_code if self.path == "/work?view=summary" else 200
+        self.send_response(code)
         self.end_headers()
         data = {"status": "ok", "peers": 1, "schema_version": 14, "auth_token": "never-show-secret"} if self.path == "/health" else {
             "peers": [{"peer_id": "peer-1", "display_name": "Fake agent", "backend": "codex", "status": "online",
                        "turn_state": "working", "source": "codex-app-server", "inbound_status": "online",
                        "metadata": {"auth_token": "never-show-secret"}, "certificate": "never-show-secret"},
                       {"peer_id": "peer-2", "display_name": "Offline agent", "status": "offline"}]}
+        if self.path == "/schedules":
+            data = {"schedules": self.server.schedules}
+        elif self.path == "/work?view=summary":
+            data = {"work": [{"work_id": "occurrence-not-a-plan", "title": "Old occurrence"}], "recurring": self.server.jobs}
         self.wfile.write(json.dumps(data).encode())
 
     def do_POST(self):
@@ -52,6 +57,8 @@ class DashboardTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.server.reads, self.server.writes, self.server.health_code = [], [], 200
+        self.server.schedules, self.server.jobs = [], []
+        self.server.schedule_code, self.server.jobs_code = 200, 200
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.addCleanup(self.close_server)
@@ -82,7 +89,7 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(value["tasks"]["data"][0]["next_action"], "Compare results")
         self.assertEqual(value["tasks"]["data"][0]["description"], "比较后台运行的评估结果")
         self.assertNotIn("never-show-secret", json.dumps(value))
-        self.assertEqual(set(self.server.reads), {"/health", "/peers?include_hidden=true"})
+        self.assertEqual(set(self.server.reads), {"/health", "/peers?include_hidden=true", "/schedules", "/work?view=summary"})
         self.assertEqual(self.server.writes, [])
         self.assertEqual(value["services"][2]["status"], "running")
         self.assertEqual(value["services"][3]["status"], "not observed")
@@ -95,6 +102,32 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(len(value["peers"]["data"]), 2)
         self.assertEqual(value["services"][1]["status"], "unavailable")
         self.assertEqual(value["services"][1]["pids"], [200])
+
+    def test_native_plans_are_batched_and_one_unavailable_source_does_not_hide_others(self):
+        self.server.schedules = [{"schedule_id": "same-id", "text": "Inspect native results", "fire_at": "2030-01-01T00:00:00Z", "to_peer": "peer-2", "metadata": {"secret": "never-show-secret"}}]
+        self.server.jobs = [{"calendar_id": "daily", "title": "Daily job", "state": "active", "cron": "0 0 * * *", "next_due_at": "2030-01-02T00:00:00Z"}]
+        value = self.snapshot()
+        self.assertEqual(len(value["task_overview"]), 3)
+        self.assertNotIn("Old occurrence", json.dumps(value))
+        self.assertNotIn("never-show-secret", json.dumps(value))
+        self.server.jobs_code = 404
+        value = self.snapshot()
+        self.assertEqual(len(dashboard.rows_for(value, "Tasks")), 2)
+        self.assertEqual(value["recurring_jobs"]["error"], "HTTP 404")
+        text = dashboard.text_snapshot(value)
+        self.assertIn("Inspect native results", text)
+        self.assertIn("RW jobs: HTTP 404", text)
+        self.assertEqual(self.server.writes, [])
+
+    def test_empty_native_null_is_healthy_but_malformed_data_is_unavailable(self):
+        self.server.schedules, self.server.jobs = None, None
+        value = self.snapshot()
+        self.assertEqual(value["schedules"], {"data": [], "error": None})
+        self.assertEqual(value["recurring_jobs"], {"data": [], "error": None})
+        self.server.schedules = {"invalid": "shape"}
+        value = self.snapshot()
+        self.assertIsNotNone(value["schedules"]["error"])
+        self.assertEqual(len(dashboard.rows_for(value, "Tasks")), 1)
 
     def test_missing_ctm_is_not_reported_as_an_empty_healthy_list(self):
         with patch.object(dashboard, "repowire_connection", return_value=(self.base, "test-token")), \
@@ -134,7 +167,7 @@ class DashboardTests(unittest.TestCase):
                 for line in lines:
                     size = sum(0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in "WF" else 1 for c in line)
                     self.assertLessEqual(size, width)
-        self.assertIn("17:00:00", dashboard.table_lines(value, "Tasks", value["tasks"]["data"], 120)[1])
+        self.assertIn("2026-10-25 17:00", dashboard.table_lines(value, "Tasks", value["tasks"]["data"], 120)[1])
         self.assertIn("比较后台运行的评估结果", dashboard.table_lines(value, "Tasks", value["tasks"]["data"], 120)[1])
         detail = wrapped_detail({"next_action": "验证中文排版" * 20}, 30)
         self.assertGreater(len(detail), 4)
@@ -208,6 +241,7 @@ class DashboardTests(unittest.TestCase):
             import curses
         except ImportError:
             self.skipTest("curses unavailable")
+        self.server.schedules = [{"schedule_id": "nightly", "text": "Nightly report", "cron": "0 0 * * *", "fire_at": "2026-10-27T00:00:00Z", "from_peer": "peer-1", "to_peer": "peer-2"}]
         master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 28, 120, 0, 0))
         env = {**os.environ, "TERM": "xterm-256color", "NO_COLOR": "", "PYTHONPATH": str(Path(__file__).resolve().parents[1]/"src"),
@@ -226,12 +260,22 @@ class DashboardTests(unittest.TestCase):
                         break
         try:
             drain(.7)
+            self.assertIn(b"Nightly report", output)
+            os.write(master, b"s")
+            drain(.2)
+            os.write(master, b"s")
+            drain(.2)
+            self.assertIn(b"repowire", output)
+            os.write(master, b"s")
+            drain(.2)
+            before_agents = len(output)
             os.write(master, b"\x1bOC")  # Right: Tasks -> Agents (xterm application cursor mode).
             drain(.2)
-            self.assertNotIn(b"Offline agent", output)
+            self.assertNotIn(b"Offline agent", output[before_agents:])
+            before_all = len(output)
             os.write(master, b"a")
             drain(.2)
-            self.assertIn(b"Offline agent", output)
+            self.assertIn(b"Offline agent", output[before_all:])
             self.assertIn(b"all records", output)
             os.write(master, b"a")
             drain(.2)

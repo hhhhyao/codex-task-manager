@@ -3,6 +3,12 @@
 Task Manager 负责观察、积攒和请求注意力；Repowire 负责把消息送入目标会话。
 运行时直接调用本机 Repowire 的认证 `/notify` 接口，不启动新 Agent 或新 tmux 窗口。
 
+`ctm ui` 的 Tasks 页也只读汇总 Repowire 定时消息和 recurring Jobs。Agent 可以继续直接用
+Repowire 管理 cron，无需再向 CTM 注册副本。按 `s` 筛选来源，Enter 查看原始 ID、目标会话、
+连接实例和原生管理命令；已取消的 recurring 计划用 `a` 展开。
+看板查询 `/schedules` 与 `/work?view=summary` 的 `recurring`，不把 Job 的历次执行展成历史列表。
+目标离线只影响接收健康提示，不隐藏计划；cron 触发时间推进与实际投递、执行结果分别展示。
+
 ## 安装和原生接入
 
 在已能使用 Codex 的终端安装 Repowire，再执行其 setup：

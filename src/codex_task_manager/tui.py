@@ -8,6 +8,7 @@ import sys
 import time
 
 from .dashboard import VIEWS, agent_visibility_reasons, clean, clip, collect_snapshot, pad, row_id, rows_for, table_layout, text_snapshot
+from .overview import SOURCE_FILTERS, source_errors
 
 
 def terminal_palette(curses):
@@ -40,7 +41,7 @@ def status_role(value):
         return "warning"
     if value in {"checking", "working", "running", "busy", "delivery_sending"}:
         return "busy"
-    if value in {"reachable", "online", "connected", "completed", "done", "ok"}:
+    if value in {"reachable", "online", "connected", "completed", "done", "ok", "active"}:
         return "good"
     return "muted" if value in {"offline", "cancelled", "canceled", "stopped", "subagent", "internal", "archived", "-"} else "normal"
 
@@ -86,6 +87,7 @@ def interactive(screen, directory, refresh, collector=collect_snapshot):
     selected = [Selection() for _ in VIEWS]
     tab, query, editing, detail, offset = 0, "", False, False, 0
     all_agents, paused = False, False
+    task_source, inactive_tasks = 0, False
     snapshot, error = None, None
     pool = ThreadPoolExecutor(max_workers=1)
     future = pool.submit(collector, directory)
@@ -114,7 +116,8 @@ def interactive(screen, directory, refresh, collector=collect_snapshot):
                 future = pool.submit(collector, directory)
             height, width = screen.getmaxyx()
             view = VIEWS[tab]
-            rows = rows_for(snapshot, view, query, all_agents) if snapshot else []
+            source_filter = SOURCE_FILTERS[task_source]
+            rows = rows_for(snapshot, view, query, inactive_tasks if view == "Tasks" else all_agents, source_filter) if snapshot else []
             selection = selected[tab]
             selection.sync(rows)
             screen.erase()
@@ -135,10 +138,22 @@ def interactive(screen, directory, refresh, collector=collect_snapshot):
                 peer_count = f"{len(rows_for(snapshot, 'Agents'))}/{len(peers)}" if peers is not None else "unavailable"
                 ping = snapshot["ctm"]["data"] or {}
                 activity = f"checks {ping.get('checks_running','?')}/sends {ping.get('sends_running','?')}"
-                draw(2, f"Tasks {task_count} ({activity}) | Main/all agents {peer_count} | Filter: {query or '-'}", styles["muted"])
+                if view == "Tasks":
+                    counts = []
+                    for key, label in (("tasks", "CTM"), ("schedules", "RW schedules"), ("recurring_jobs", "RW jobs")):
+                        data = snapshot.get(key, {}).get("data")
+                        counts.append(f"{label} {len(data) if data is not None else '?'}")
+                    overview = " | ".join(counts) + f" | Source {source_filter}"
+                else:
+                    overview = f"CTM {task_count} ({activity}) | Main/all agents {peer_count}"
+                draw(2, overview, styles["muted"])
                 source = snapshot.get("tasks" if view == "Tasks" else "peers", {})
-                source_error = source.get("error") if view != "Services" else None
+                source_error = "; ".join(source_errors(snapshot, source_filter)) if view == "Tasks" else source.get("error") if view == "Agents" else None
                 hint = (" | all records" if all_agents else f" | main sessions; {len(peers)-len(rows_for(snapshot, 'Agents'))} hidden") if view == "Agents" and peers is not None else ""
+                if view == "Tasks":
+                    hint = " | including cancelled plans" if inactive_tasks else " | current plans"
+                if query:
+                    hint += " | Filter: " + query
                 draw(3, error or ("Unavailable: " + source_error if source_error else f"{view} | {len(rows)} entries{hint} | Enter: details"), styles["error"] if error or source_error else styles["normal"])
                 room = height-(8 if view == "Tasks" and not detail else 7)
                 if detail and rows:
@@ -156,6 +171,8 @@ def interactive(screen, directory, refresh, collector=collect_snapshot):
                         x = 2
                         for header, value, size in zip(headers, values, sizes):
                             role = status_role(value) if header in {"STATE", "TURN", "INBOUND"} else "warning" if header == "BUF" and value else "normal"
+                            if header == "TARGET" and rows[start+i].get("target_state") in {"offline", "no input", "disconnected"}:
+                                role = "warning"
                             draw(5+i, pad(value, size), styles[role] | (curses.A_BOLD if active else 0), x)
                             x += size+2
                 elif not source_error:
@@ -168,12 +185,16 @@ def interactive(screen, directory, refresh, collector=collect_snapshot):
                 row = rows[selection.index]
                 if view == "Tasks":
                     draw(height-4, "Description: " + str(row.get("description") or "-"), styles["muted"])
-                context = ("Next action: " + str(row.get("next_action") or "-")) if view == "Tasks" else (
+                task_context = ("Next action: " + str(row.get("next_action") or "-")) if row.get("manager") == "ctm" else (
+                    "To: " + str(row.get("target_name") or "-") + " (" + str(row.get("target_state") or "unknown") + ") | " +
+                    ("Cron: " + str(row["cron"]) if row.get("cron") else "One-shot") + " | " + str(row.get("source_instance") or "-"))
+                context = task_context if view == "Tasks" else (
                     "View: " + (", ".join(agent_visibility_reasons(row)) or "main session") + " | Agent: " + str(row.get("display_name") or row.get("name") or row_id(row)) + " | Session: " + str(row.get("session_name") or "-")) if view == "Agents" else "Evidence: " + str(row.get("evidence", "-"))
                 draw(height-3, context, styles["muted"])
             draw(height-2, "Filter: " + query + "_  Enter: apply  Esc: finish" if editing else
                  "←/→: page  ↑/↓: select  Enter/Esc: details  /: filter", styles["muted"])
-            draw(height-1, "r: refresh  p: pause  a: all/main agents  q: quit | UTC", styles["muted"])
+            actions = "s: source  a: cancelled plans" if view == "Tasks" else "a: all/main agents" if view == "Agents" else ""
+            draw(height-1, "r: refresh  p: pause  " + actions + "  q: quit | UTC", styles["muted"])
             screen.refresh()
             try:
                 key = screen.get_wch()
@@ -207,6 +228,12 @@ def interactive(screen, directory, refresh, collector=collect_snapshot):
                 editing = True
             elif key == "a" and view == "Agents":
                 all_agents = not all_agents
+            elif key == "a" and view == "Tasks":
+                inactive_tasks = not inactive_tasks
+                detail, offset = False, 0
+            elif key == "s" and view == "Tasks":
+                task_source = (task_source+1) % len(SOURCE_FILTERS)
+                detail, offset = False, 0
             elif key == "p":
                 paused = not paused
             elif key == "r" and future is None:
