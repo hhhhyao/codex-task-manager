@@ -68,6 +68,26 @@ Task Manager 同样可托管 `ctm daemon run`。这些服务使用同一用户�
 CODEX_HOME、Repowire 配置和可用 PATH。Codex 共享 App Server 由 Codex 管理，
 bridge 连接它；复用已有服务和原会话，观察脚本不承担连接服务的启动工作。
 
+`ctm daemon start` 本身不安装登录/开机自启。需要自动恢复时，将 CTM 也加入同一进程管理器，
+而非只托管 Repowire 和 bridge。Supervisor 配置示例（替换路径）：
+
+```ini
+[program:codex-task-manager]
+command=/absolute/path/to/ctm --state-dir /absolute/shared/state daemon run
+directory=/absolute/home
+autostart=true
+autorestart=unexpected
+exitcodes=0
+stopsignal=TERM
+stopwaitsecs=30
+stopasgroup=true
+killasgroup=true
+```
+
+确保进程管理器本身在启动/登录时恢复。重启后先核对任务与目标会话的绑定：
+中断中的检查会暂停，确认旧检查进程已退出后用 `ctm resume ID` 恢复；
+接收会话未重新注册时出现的投递 404 不等于观察失败，保留原 thread UUID，恢复原会话后再核对 peer 路由。
+
 ## 切换 Codex 登录账号
 
 安装本项目时会一并安装 `codex-server` 和登录客户端依赖：
@@ -83,6 +103,10 @@ codex-server status
 CTM 任务、Repowire daemon 和 bridge 无需为换号而重启。
 默认遵循 `CODEX_HOME` 的控制 socket；自定义路径、超时和影响范围见
 [账号使用说明](../README.md#codex-账号登录与切换)。Repowire 的 HTTP token 仍单独管理。
+
+如果先执行了普通 `codex login`，凭据存储可能已更新，而正在运行的 App Server 仍缓存旧账号。
+应分别核对存储和服务端身份；可通过上面的原生登录入口更新服务，或在可接受断开现有会话时
+执行 `codex app-server daemon restart`，让共享服务重新加载已登录凭据。token 续期不能代替跨账号重载。
 
 ## 获取接收身份和验证
 

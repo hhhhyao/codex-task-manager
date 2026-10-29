@@ -11,13 +11,14 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import AsyncMock, Mock
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from codex_task_manager.client import request
 from codex_task_manager.common import socket_path, stamp
 from codex_task_manager.transport import classify
-from codex_task_manager.daemon import run_check
+from codex_task_manager.daemon import Daemon, run_check
 from test_manager import OWNER
 
 
@@ -208,6 +209,16 @@ class ReceiptTests(unittest.TestCase):
 
 
 class CheckProcessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_client_disconnect_during_close_does_not_escape_request_handler(self):
+        daemon = Daemon.__new__(Daemon)
+        daemon.dispatch = AsyncMock(return_value={"pid": 123})
+        reader = Mock(readline=AsyncMock(return_value=b'{"op":"ping"}\n'))
+        writer = Mock(drain=AsyncMock(side_effect=BrokenPipeError), wait_closed=AsyncMock(side_effect=BrokenPipeError))
+        await daemon.handle(reader, writer)
+        writer.close.assert_called_once()
+        writer.wait_closed.assert_awaited_once()
+        daemon.dispatch.assert_awaited_once_with({"op": "ping"})
+
     async def test_chunked_stdout_is_read_completely(self):
         with tempfile.TemporaryDirectory() as directory:
             code = "import sys,time;sys.stdout.write('{\"events\":');sys.stdout.flush();time.sleep(.05);print('[],\"status\":\"running\"}')"

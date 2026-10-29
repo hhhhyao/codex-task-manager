@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import suppress
 import fcntl
 import json
 import logging
@@ -82,7 +83,8 @@ class Daemon:
             pass
         finally:
             writer.close()
-            await writer.wait_closed()
+            with suppress(OSError, ConnectionError):
+                await writer.wait_closed()
 
     async def dispatch(self, request):
         op = request["op"]
